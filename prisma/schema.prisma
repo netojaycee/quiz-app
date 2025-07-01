@@ -1,0 +1,152 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+    output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+    MODERATOR
+    CONTESTANT
+}
+
+model Quiz {
+    id        String   @id @default(cuid())
+    name      String
+    isActive  Boolean  @default(true)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    winnerId  String? // ID of the winning user
+
+    rounds      Round[]
+    responses   Response[]
+    contestants Contestant[]
+    scores      Score[]
+    users       User[] // Users associated with this quiz
+    positions   QuizPosition[] // Track user positions/rankings
+}
+
+model Round {
+    id              String   @id @default(cuid())
+    quizId          String
+    quiz            Quiz     @relation(fields: [quizId], references: [id])
+    roundNumber     Int
+    quizType        String   @default("multiple_choice") // multiple_choice, yes_no, simultaneous
+    timePerQuestion Int? // Seconds per question (Type 1/2) or per session (Type 3)
+    isActive        Boolean  @default(false)
+    createdAt       DateTime @default(now())
+
+    questions Question[]
+    scores    Score[]
+
+    @@unique([quizId, roundNumber]) // Ensure unique round numbers per quiz
+}
+
+model Question {
+    id                 String   @id @default(cuid())
+    quizId             String
+    roundId            String
+    questionNumber     Int // Order of question (1, 2, 3...)
+    questionText       String
+    options            Json // ["Option 1", "Option 2", ...] or ["Yes", "No"]
+    correctAnswerIndex Int
+    points             Int      @default(1) // Points awarded for correct answer
+    createdAt          DateTime @default(now())
+
+    round     Round      @relation(fields: [roundId], references: [id])
+    responses Response[]
+    book      String // e.g., "Proverbs", "Ecclesiastes"
+    chapter   Int // e.g., 1, 2, 31
+
+    @@unique([quizId, roundId, questionNumber]) // Ensure unique question numbers per quiz/round
+}
+
+model Contestant {
+    id       String   @id @default(cuid())
+    name     String // Contestant's name (e.g., "John", "Peace")
+    userId   String // The user (team lead) this contestant belongs to
+    quizId   String // The quiz this contestant is participating in
+    location String? // Optional location info (e.g., "Lagos", "Kogi")
+    joinedAt DateTime @default(now())
+    isActive Boolean  @default(true)
+
+    user User @relation(fields: [userId], references: [id])
+    quiz Quiz @relation(fields: [quizId], references: [id])
+
+    @@unique([name, userId, quizId]) // A user can't have duplicate contestant names per quiz
+}
+
+model User {
+    id        String   @id @default(cuid())
+    username  String   @unique
+    password  String
+    quizId    String? // Optional, if the user is associated with a specific quiz
+    role      UserRole @default(CONTESTANT)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    quiz        Quiz?          @relation(fields: [quizId], references: [id])
+    responses   Response[]
+    scores      Score[]
+    contestants Contestant[] // A user can have many contestant entries (group quiz)
+    positions   QuizPosition[] // Track positions in different quizzes
+
+    @@unique([username, quizId])
+    @@map("users")
+}
+
+model Response {
+    id            String   @id @default(cuid())
+    userId        String // The user (team) who answered
+    quizId        String
+    roundId       String
+    questionId    String
+    selectedIndex Int
+    isCorrect     Boolean
+    pointsEarned  Int      @default(0) // Points earned for this response
+    submittedAt   DateTime @default(now())
+
+    user     User     @relation(fields: [userId], references: [id])
+    question Question @relation(fields: [questionId], references: [id])
+    quiz     Quiz     @relation(fields: [quizId], references: [id])
+
+    @@unique([userId, questionId]) // One response per user per question
+}
+
+model Score {
+    id                String @id @default(cuid())
+    userId            String // The user (team) whose score this is
+    quizId            String
+    roundId           String
+    roundScore        Int    @default(0) // Sum of points from all questions in this round
+    questionsAnswered Int    @default(0) // Number of questions answered in this round
+    questionsCorrect  Int    @default(0) // Number of correct answers in this round
+
+    user  User  @relation(fields: [userId], references: [id])
+    quiz  Quiz  @relation(fields: [quizId], references: [id])
+    round Round @relation(fields: [roundId], references: [id])
+
+    @@unique([userId, quizId, roundId]) // One score per user per round
+}
+
+// Track user positions/rankings in quizzes
+model QuizPosition {
+    id          String   @id @default(cuid())
+    userId      String
+    quizId      String
+    position    Int // 1st, 2nd, 3rd, etc.
+    totalScore  Int // Final score for this quiz
+    completedAt DateTime @default(now())
+
+    user User @relation(fields: [userId], references: [id])
+    quiz Quiz @relation(fields: [quizId], references: [id])
+
+    @@unique([userId, quizId]) // One position per user per quiz
+    @@unique([quizId, position]) // One position per quiz (no ties for now)
+}
