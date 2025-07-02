@@ -1,0 +1,11 @@
+questionText,questionType,option1,option2,option3,option4,correctAnswerIndex,difficulty
+"What is the capital of Nigeria?",multiple_choice,"Lagos","Port Harcourt","Abuja","Kano",2,medium
+"Is the earth round?",yes_no,"Yes","No","","",0,easy
+"Which programming language is used for web development?",multiple_choice,"Python","JavaScript","C++","Java",1,medium
+"Nigeria gained independence in 1960",yes_no,"Yes","No","","",0,easy
+"What is 2 + 2?",multiple_choice,"3","4","5","6",1,easy
+"The sky is blue during the day",yes_no,"Yes","No","","",0,easy
+"Who wrote the Nigerian national anthem?",multiple_choice,"Chinua Achebe","Wole Soyinka","Benedict Odiase","Fela Kuti",2,hard
+"Lagos is the largest city in Nigeria",yes_no,"Yes","No","","",0,medium
+"What is the currency of Nigeria?",multiple_choice,"Naira","Dollar","Pound","Euro",0,easy
+"Nigeria has 36 states",yes_no,0,"Yes","No","","","medium"

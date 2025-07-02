@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateQuizDto, CreateContestantDto } from './dto/create-quiz.dto';
+import { CreateQuizDto, CreateContestantDto, CreateUserWithContestantsDto } from './dto/create-quiz.dto';
 import { UpdateQuizDto } from './dto/update-quiz.dto';
 import { QuizResponseDto } from './dto/quiz-response.dto';
 import { plainToClass } from 'class-transformer';
@@ -81,40 +81,32 @@ export class QuizService {
         }
     }
 
-    // Reusable function to check if contestant names already exist for user in quiz
-    async validateContestantsNotExist(quizId: string, userId: string, contestantNames: string[]) {
-        if (!contestantNames || contestantNames.length === 0) return;
-
-        const existingContestants = await this.prisma.contestant.findMany({
-            where: {
-                quizId,
-                userId,
-                name: { in: contestantNames },
-            },
+    // Reusable function to check if username already exists
+    async validateUsernameUnique(username: string) {
+        const existingUser = await this.prisma.user.findUnique({
+            where: { username },
         });
 
-        if (existingContestants.length > 0) {
-            const duplicateNames = existingContestants.map(c => c.name);
-            throw new ConflictException(`Contestant names already exist for this user in this quiz: ${duplicateNames.join(', ')}`);
+        if (existingUser) {
+            throw new ConflictException(`Username '${username}' already exists`);
         }
     }
 
-    async create(createQuizDto: CreateQuizDto, userId: string) {
+    async create(createQuizDto: CreateQuizDto, moderatorId: string) {
         // Validate rounds
         this.validateRounds(createQuizDto.rounds);
 
-        // Validate users exist (if provided)
-        const validatedUsers = await this.validateUsersExist(createQuizDto.userIds || []);
+        // Validate existing users (if provided)
+        // const validatedUsers = await this.validateUsersExist(createQuizDto.existingUserIds || []);
 
-        // Validate contestant names are unique for this user (if provided)
-        if (createQuizDto.contestants && createQuizDto.contestants.length > 0) {
-            const contestantNames = createQuizDto.contestants.map(c => c.name);
-            // We'll validate after quiz creation
+        // Validate all usernames are unique before creating
+        for (const userData of createQuizDto.users) {
+            await this.validateUsernameUnique(userData.username);
         }
 
-        // Create quiz with rounds and contestants in a transaction
+        // Create quiz with users and contestants in a transaction
         const quiz = await this.prisma.$transaction(async (tx) => {
-            // Create the quiz
+            // Create the quiz first
             const newQuiz = await tx.quiz.create({
                 data: {
                     name: createQuizDto.name,
@@ -123,33 +115,64 @@ export class QuizService {
                             roundNumber: round.roundNumber,
                             quizType: round.quizType,
                             timePerQuestion: round.timePerQuestion,
+                            questionsPerParticipant: round.questionsPerParticipant || 3,
                         })),
                     },
-                    // Associate users with quiz if provided
-                    ...(createQuizDto.userIds && {
-                        users: {
-                            connect: createQuizDto.userIds.map(id => ({ id })),
-                        },
-                    }),
                 },
                 include: {
                     rounds: { orderBy: { roundNumber: 'asc' } },
                 },
             });
 
-            // Create contestants if provided (they belong to the creating user)
-            if (createQuizDto.contestants && createQuizDto.contestants.length > 0) {
-                await tx.contestant.createMany({
-                    data: createQuizDto.contestants.map(contestant => ({
-                        name: contestant.name,
-                        location: contestant.location,
-                        userId: userId, // The user creating the quiz
-                        quizId: newQuiz.id,
-                    })),
+            // Collect all user IDs that will be associated with the quiz
+            const allUserIds: string[] = [];
+
+            // Add existing user IDs if provided
+            if (createQuizDto.existingUserIds) {
+                allUserIds.push(...createQuizDto.existingUserIds);
+            }
+
+            // Create new users and collect their IDs
+            for (const userData of createQuizDto.users) {
+                // Create user account
+                const newUser = await tx.user.create({
+                    data: {
+                        username: userData.username,
+                        // Don't set password field at all for contestants
+                        role: 'CONTESTANT',
+                    },
+                });
+
+                allUserIds.push(newUser.id);
+
+                // Create contestants for this user in batch
+                if (userData.contestants.length > 0) {
+                    await tx.contestant.createMany({
+                        data: userData.contestants.map(contestant => ({
+                            name: contestant.name,
+                            location: contestant.location,
+                            userId: newUser.id,
+                            quizId: newQuiz.id,
+                        })),
+                    });
+                }
+            }
+
+            // Associate all users with the quiz in one operation
+            if (allUserIds.length > 0) {
+                await tx.quiz.update({
+                    where: { id: newQuiz.id },
+                    data: {
+                        users: {
+                            connect: allUserIds.map(id => ({ id })),
+                        },
+                    },
                 });
             }
 
             return newQuiz;
+        }, {
+            timeout: 30000, // 30 seconds timeout
         });
 
         // Return the complete quiz with all relations
@@ -189,24 +212,47 @@ export class QuizService {
         return plainToClass(QuizResponseDto, quiz, { excludeExtraneousValues: true });
     }
 
+    /**
+     * Update a quiz with flexible user association management.
+     * 
+     * Two modes of operation:
+     * 1. Replace Mode: When existingUserIds is provided, ALL user associations are replaced
+     * 2. Additive Mode: When existingUserIds is NOT provided, users are added/removed incrementally
+     * 
+     * @param id Quiz ID to update
+     * @param updateQuizDto Update data
+     * @param userId Optional user ID (for future authorization)
+     * @returns Updated quiz with all relations
+     */
     async update(id: string, updateQuizDto: UpdateQuizDto, userId?: string) {
         // Check if quiz exists
-        await this.findQuizById(id);
+        const existingQuiz = await this.findQuizById(id);
 
         // Validate rounds if provided
         if (updateQuizDto.rounds) {
             this.validateRounds(updateQuizDto.rounds);
         }
 
-        // Validate users if provided
-        if (updateQuizDto.userIds) {
-            await this.validateUsersExist(updateQuizDto.userIds);
+        // Validate existing users if provided
+        if (updateQuizDto.existingUserIds) {
+            await this.validateUsersExist(updateQuizDto.existingUserIds);
         }
 
-        // Validate contestants if provided (they will belong to the updating user)
-        if (updateQuizDto.contestants && userId) {
-            const contestantNames = updateQuizDto.contestants.map(c => c.name);
-            await this.validateContestantsNotExist(id, userId, contestantNames);
+        // Validate additional existing users if provided
+        if (updateQuizDto.addExistingUserIds) {
+            await this.validateUsersExist(updateQuizDto.addExistingUserIds);
+        }
+
+        // Validate users to remove if provided
+        if (updateQuizDto.removeUserIds) {
+            await this.validateUsersExist(updateQuizDto.removeUserIds);
+        }
+
+        // Validate new user usernames are unique (before transaction)
+        if (updateQuizDto.users) {
+            for (const userData of updateQuizDto.users) {
+                await this.validateUsernameUnique(userData.username);
+            }
         }
 
         const updatedQuiz = await this.prisma.$transaction(async (tx) => {
@@ -222,7 +268,8 @@ export class QuizService {
 
             // Update rounds if provided
             if (updateQuizDto.rounds) {
-                // Delete existing rounds
+                // Delete existing rounds (and related data)
+                await tx.question.deleteMany({ where: { quizId: id } });
                 await tx.round.deleteMany({ where: { quizId: id } });
 
                 // Create new rounds
@@ -236,31 +283,124 @@ export class QuizService {
                 });
             }
 
-            // Add new contestants if provided (they belong to the updating user)
-            if (updateQuizDto.contestants && userId) {
-                await tx.contestant.createMany({
-                    data: updateQuizDto.contestants.map(contestant => ({
-                        name: contestant.name,
-                        location: contestant.location,
-                        userId: userId,
-                        quizId: id,
-                    })),
-                });
-            }
+            // Handle user associations
+            let userAssociationUpdate = false;
 
-            // Update user associations if provided
-            if (updateQuizDto.userIds) {
+            // Case 1: Replace all user associations (if existingUserIds is provided)
+            if (updateQuizDto.existingUserIds) {
+                const allUserIds: string[] = [...updateQuizDto.existingUserIds];
+
+                // Add new users if provided
+                if (updateQuizDto.users) {
+                    for (const userData of updateQuizDto.users) {
+                        // Create user account
+                        const newUser = await tx.user.create({
+                            data: {
+                                username: userData.username,
+                                // Don't set password field at all for contestants
+                                role: 'CONTESTANT',
+                            },
+                        });
+
+                        allUserIds.push(newUser.id);
+
+                        // Create contestants for this user
+                        await tx.contestant.createMany({
+                            data: userData.contestants.map(contestant => ({
+                                name: contestant.name,
+                                location: contestant.location,
+                                userId: newUser.id,
+                                quizId: id,
+                            })),
+                        });
+                    }
+                }
+
+                // Remove duplicates and set all associations
+                const uniqueUserIds = [...new Set(allUserIds)];
                 await tx.quiz.update({
                     where: { id },
                     data: {
                         users: {
-                            set: updateQuizDto.userIds.map(userId => ({ id: userId })),
+                            set: uniqueUserIds.map(userId => ({ id: userId })),
                         },
                     },
                 });
+
+                userAssociationUpdate = true;
+            }
+            // Case 2: Additive updates (add/remove users from existing associations)
+            else {
+                // Add new users if provided
+                if (updateQuizDto.users) {
+                    for (const userData of updateQuizDto.users) {
+                        // Create user account
+                        const newUser = await tx.user.create({
+                            data: {
+                                username: userData.username,
+                                // Don't set password field at all for contestants
+                                role: 'CONTESTANT',
+                            },
+                        });
+
+                        // Create contestants for this user
+                        await tx.contestant.createMany({
+                            data: userData.contestants.map(contestant => ({
+                                name: contestant.name,
+                                location: contestant.location,
+                                userId: newUser.id,
+                                quizId: id,
+                            })),
+                        });
+
+                        // Connect the new user to the quiz
+                        await tx.quiz.update({
+                            where: { id },
+                            data: {
+                                users: {
+                                    connect: { id: newUser.id },
+                                },
+                            },
+                        });
+                    }
+                }
+
+                // Add existing users if provided
+                if (updateQuizDto.addExistingUserIds) {
+                    await tx.quiz.update({
+                        where: { id },
+                        data: {
+                            users: {
+                                connect: updateQuizDto.addExistingUserIds.map(userId => ({ id: userId })),
+                            },
+                        },
+                    });
+                }
+
+                // Remove users if provided
+                if (updateQuizDto.removeUserIds) {
+                    // Also remove their contestants from this quiz
+                    await tx.contestant.deleteMany({
+                        where: {
+                            quizId: id,
+                            userId: { in: updateQuizDto.removeUserIds }
+                        }
+                    });
+
+                    await tx.quiz.update({
+                        where: { id },
+                        data: {
+                            users: {
+                                disconnect: updateQuizDto.removeUserIds.map(userId => ({ id: userId })),
+                            },
+                        },
+                    });
+                }
             }
 
             return quiz;
+        }, {
+            timeout: 30000, // 30 seconds timeout
         });
 
         // Return the complete updated quiz
@@ -293,6 +433,8 @@ export class QuizService {
 
             // Finally delete the quiz
             await tx.quiz.delete({ where: { id } });
+        }, {
+            timeout: 30000, // 30 seconds timeout
         });
 
         return { message: 'Quiz deleted successfully' };
@@ -303,9 +445,6 @@ export class QuizService {
     async addContestants(quizId: string, userId: string, contestants: CreateContestantDto[]) {
         await this.findQuizById(quizId);
         await this.validateUsersExist([userId]);
-
-        const contestantNames = contestants.map(c => c.name);
-        await this.validateContestantsNotExist(quizId, userId, contestantNames);
 
         await this.prisma.contestant.createMany({
             data: contestants.map(contestant => ({
@@ -518,7 +657,7 @@ export class QuizService {
         return leaderboard;
     }
 
-    async submitResponse(userId: string, questionId: string, selectedIndex: number) {
+    async submitResponse(userId: string, questionId: string, selectedIndex: number, roundId: string, points: number, isCorrect: boolean) {
         // Get question details
         const question = await this.prisma.question.findUnique({
             where: { id: questionId },
@@ -543,24 +682,23 @@ export class QuizService {
         }
 
         // Calculate response
-        const isCorrect = selectedIndex === question.correctAnswerIndex;
-        const pointsEarned = isCorrect ? question.points : 0;
+        // const isCorrect = selectedIndex === question.correctAnswerIndex;
 
         // Create response
         const response = await this.prisma.response.create({
             data: {
                 userId,
                 quizId: question.quizId,
-                roundId: question.roundId,
+                roundId,
                 questionId,
                 selectedIndex,
                 isCorrect,
-                pointsEarned,
+                pointsEarned: points, // Use points parameter for dynamic scoring
             },
         });
 
         // Recalculate round score
-        await this.calculateRoundScore(userId, question.quizId, question.roundId);
+        await this.calculateRoundScore(userId, question.quizId, roundId);
 
         // Update quiz positions
         await this.updateQuizPositions(question.quizId);
@@ -584,14 +722,15 @@ export class QuizService {
                         },
                     },
                 },
+
+                questions: {
+                    orderBy: { questionNumber: 'asc' },
+                    select: { id: true, questionNumber: true },
+                },
+
                 rounds: {
                     orderBy: { roundNumber: 'asc' },
-                    include: {
-                        questions: {
-                            orderBy: { questionNumber: 'asc' },
-                            select: { id: true, questionNumber: true, points: true },
-                        },
-                    },
+
                 },
             },
         });
@@ -605,6 +744,7 @@ export class QuizService {
             leaderboard,
             contestants: quiz.contestants,
             rounds: quiz.rounds,
+            questions: quiz.questions,
         };
     }
 }

@@ -1,0 +1,71 @@
+mark as isanswere when answered in redis and hit dab endpoint too
+
+make sure redis always sync to db to after quiz, during quiz we use redis....once it ends u send all updates yet to be sent to db when redis doesnt exist fetch from db
+
+
+Quiz payload
+{
+  "name": "Bible Knowledge Championship 2025",
+  "rounds": [
+    {
+      "roundNumber": 1,
+      "quizType": "multiple_choice",
+      "timePerQuestion": 30
+    },
+    {
+      "roundNumber": 2,
+      "quizType": "yes_no",
+      "timePerQuestion": 15
+    },
+    {
+      "roundNumber": 3,
+      "quizType": "simultaneous",
+      "timePerQuestion": 45
+    }
+  ],
+  "users": [
+    {
+      "username": "lagos",
+      "contestants": [
+        {
+          "name": "John",
+          "location": "Kano"
+        },
+        {
+          "name": "Winifred",
+          "location": "Ogun"
+        }
+      ]
+    },
+    {
+      "username": "jos", 
+      "contestants": [
+        {
+          "name": "Joy",
+          "location": "Jos"
+        },
+        {
+          "name": "Philip",
+          "location": "Kano"
+        }
+      ]
+    },
+    {
+      "username": "abuja",
+      "contestants": [
+        {
+          "name": "Emmanuel",
+          "location": "Abuja"
+        },
+        {
+          "name": "Grace",
+          "location": "Abuja"
+        },
+        {
+          "name": "David",
+          "location": "Port Harcourt"
+        }
+      ]
+    }
+  ]
+}

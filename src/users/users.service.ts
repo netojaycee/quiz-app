@@ -18,17 +18,26 @@ export class UsersService {
       throw new ConflictException('Username already exists');
     }
 
-    const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+    let hashedPassword = null;
+    
+    if (createUserDto.password) {
+      if (createUserDto.role !== 'MODERATOR') {
+      throw new ConflictException('Only moderators can have passwords');
+      }
+      hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+    } else if (createUserDto.role === 'MODERATOR') {
+      throw new ConflictException('Password is required for moderators');
+    }
 
     const user = await this.prisma.user.create({
       data: {
-        ...createUserDto,
-        password: hashedPassword,
+      ...createUserDto,
+      password: hashedPassword,
       },
     });
 
     return new UserResponseDto(user);
-  }
+    }
 
   async findAll(): Promise<UserResponseDto[]> {
     const users = await this.prisma.user.findMany({

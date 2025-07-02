@@ -14,6 +14,24 @@ datasource db {
 enum UserRole {
     MODERATOR
     CONTESTANT
+    AUDIENCE
+}
+
+enum QuizType {
+    multiple_choice
+    yes_no
+    simultaneous // All questions answered at once, no sequential answering
+}
+
+enum QuestionType {
+    multiple_choice
+    yes_no
+}
+
+enum Difficulty {
+    easy
+    medium
+    hard
 }
 
 model Quiz {
@@ -24,47 +42,51 @@ model Quiz {
     updatedAt DateTime @updatedAt
     winnerId  String? // ID of the winning user
 
-    rounds      Round[]
-    responses   Response[]
-    contestants Contestant[]
-    scores      Score[]
-    users       User[] // Users associated with this quiz
-    positions   QuizPosition[] // Track user positions/rankings
+    rounds            Round[]
+    questions         Question[] // All questions for this quiz
+    responses         Response[]
+    contestants       Contestant[]
+    scores            Score[]
+    users             User[] // Users associated with this quiz
+    positions         QuizPosition[] // Track user positions/rankings
+    participantOrders ParticipantOrder[] // Track participant order for sequential answering
 }
 
 model Round {
-    id              String   @id @default(cuid())
-    quizId          String
-    quiz            Quiz     @relation(fields: [quizId], references: [id])
-    roundNumber     Int
-    quizType        String   @default("multiple_choice") // multiple_choice, yes_no, simultaneous
-    timePerQuestion Int? // Seconds per question (Type 1/2) or per session (Type 3)
-    isActive        Boolean  @default(false)
-    createdAt       DateTime @default(now())
+    id                      String   @id @default(cuid())
+    quizId                  String
+    quiz                    Quiz     @relation(fields: [quizId], references: [id])
+    roundNumber             Int
+    quizType                QuizType @default(multiple_choice) // multiple_choice, yes_no, simultaneous
+    timePerQuestion         Int? // Seconds per question (Type 1/2) or total time for round (Type 3)
+    questionsPerParticipant Int      @default(3) // Number of questions each participant should answer
+    isActive                Boolean  @default(false)
+    createdAt               DateTime @default(now())
 
-    questions Question[]
-    scores    Score[]
+    scores Score[]
 
     @@unique([quizId, roundNumber]) // Ensure unique round numbers per quiz
 }
 
 model Question {
-    id                 String   @id @default(cuid())
+    id                 String       @id @default(cuid())
     quizId             String
-    roundId            String
-    questionNumber     Int // Order of question (1, 2, 3...)
+    questionNumber     Int // Tile number (1, 2, 3...) - for frontend tile display
     questionText       String
-    options            Json // ["Option 1", "Option 2", ...] or ["Yes", "No"]
-    correctAnswerIndex Int
-    points             Int      @default(1) // Points awarded for correct answer
-    createdAt          DateTime @default(now())
+    questionType       QuestionType @default(multiple_choice) // "multiple_choice", "yes_no"
+    options            Json // ["Option 1", "Option 2", "Option 3", "Option 4"] or ["Yes", "No"]
+    correctAnswerIndex Int // Index of correct answer (0, 1, 2, 3 for multiple choice, 0 or 1 for yes/no)
+    isAnswered         Boolean      @default(false) // Track if question has been used in any round
+    difficulty         Difficulty?  @default(medium) // "easy", "medium", "hard" - for future categorization
+    createdAt          DateTime     @default(now())
+    updatedAt          DateTime     @updatedAt
 
-    round     Round      @relation(fields: [roundId], references: [id])
+    quiz      Quiz       @relation(fields: [quizId], references: [id], onDelete: Cascade)
     responses Response[]
-    book      String // e.g., "Proverbs", "Ecclesiastes"
-    chapter   Int // e.g., 1, 2, 31
 
-    @@unique([quizId, roundId, questionNumber]) // Ensure unique question numbers per quiz/round
+    @@unique([quizId, questionNumber]) // Ensure unique question numbers per quiz for tile system
+    @@index([quizId, questionType, isAnswered]) // Optimize fetching unanswered questions by type
+    @@index([quizId, isAnswered]) // Optimize fetching unanswered questions
 }
 
 model Contestant {
@@ -85,17 +107,18 @@ model Contestant {
 model User {
     id        String   @id @default(cuid())
     username  String   @unique
-    password  String
+    password  String?
     quizId    String? // Optional, if the user is associated with a specific quiz
     role      UserRole @default(CONTESTANT)
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
-    quiz        Quiz?          @relation(fields: [quizId], references: [id])
-    responses   Response[]
-    scores      Score[]
-    contestants Contestant[] // A user can have many contestant entries (group quiz)
-    positions   QuizPosition[] // Track positions in different quizzes
+    quiz              Quiz?              @relation(fields: [quizId], references: [id])
+    responses         Response[]
+    scores            Score[]
+    contestants       Contestant[] // A user can have many contestant entries (group quiz)
+    positions         QuizPosition[] // Track positions in different quizzes
+    participantOrders ParticipantOrder[] // Track order in different quizzes
 
     @@unique([username, quizId])
     @@map("users")
@@ -149,4 +172,20 @@ model QuizPosition {
 
     @@unique([userId, quizId]) // One position per user per quiz
     @@unique([quizId, position]) // One position per quiz (no ties for now)
+}
+
+// Track participant order in rounds (for sequential question answering)
+model ParticipantOrder {
+    id         String   @id @default(cuid())
+    quizId     String
+    userId     String
+    orderIndex Int // 0, 1, 2, etc. - order in which they answer questions
+    createdAt  DateTime @default(now())
+    updatedAt  DateTime @updatedAt
+
+    user User @relation(fields: [userId], references: [id])
+    quiz Quiz @relation(fields: [quizId], references: [id])
+
+    @@unique([quizId, userId]) // One order per user per quiz
+    @@unique([quizId, orderIndex]) // One index per quiz
 }

@@ -11,13 +11,30 @@ export class AuthService {
     private jwtService: JwtService,
   ) { }
 
-  async validateUser(username: string, password: string): Promise<any> {
+  async validateUser(username: string, password?: string): Promise<any> {
     const user = await this.usersService.findByUsername(username);
-    if (user && (await bcrypt.compare(password, user.password))) {
-      const { password, ...result } = user;
-      return result;
+
+    if (!user) {
+      return null;
     }
-    return null;
+
+    // For moderators, password is required
+    if (user.role === 'MODERATOR') {
+      if (!password || !user.password) {
+        return null;
+      }
+      const isPasswordValid = await bcrypt.compare(password, user.password);
+      if (!isPasswordValid) {
+        return null;
+      }
+    }
+    // For contestants, no password check needed
+    else if (user.role === 'CONTESTANT') {
+      // Password not required for contestants
+    }
+
+    const { password: userPassword, ...result } = user;
+    return result;
   }
 
   async login(loginDto: LoginDto) {

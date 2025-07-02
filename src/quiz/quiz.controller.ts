@@ -11,7 +11,7 @@ import {
     HttpStatus,
 } from '@nestjs/common';
 import { QuizService } from './quiz.service';
-import { CreateQuizDto, CreateContestantDto } from './dto/create-quiz.dto';
+import { CreateQuizDto, CreateContestantDto, CreateUserWithContestantsDto } from './dto/create-quiz.dto';
 import { UpdateQuizDto } from './dto/update-quiz.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -27,8 +27,8 @@ export class QuizController {
     @UseGuards(JwtAuthGuard, RolesGuard)
     @Roles(UserRole.MODERATOR)
     @HttpCode(HttpStatus.CREATED)
-    create(@Body() createQuizDto: CreateQuizDto, @GetUser('id') userId: string) {
-        return this.quizService.create(createQuizDto, userId);
+    create(@Body() createQuizDto: CreateQuizDto, @GetUser('id') moderatorId: string) {
+        return this.quizService.create(createQuizDto, moderatorId);
     }
 
     @Get()

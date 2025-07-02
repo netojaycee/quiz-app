@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Socket.IO Quiz Test</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+        }
+
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+
+        input,
+        textarea,
+        button {
+            margin: 5px;
+            padding: 8px;
+        }
+
+        input[type="text"] {
+            width: 300px;
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        .log {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 3px;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+
+        .error {
+            color: red;
+        }
+
+        .success {
+            color: green;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Socket.IO Quiz Gateway Test</h1>
+
+        <div class="section">
+            <h3>Connection</h3>
+            <input type="text" id="token" placeholder="JWT Token" style="width: 500px;">
+            <button onclick="connect()">Connect</button>
+            <button onclick="disconnect()">Disconnect</button>
+            <div id="connectionStatus">Not connected</div>
+        </div>
+
+        <div class="section">
+            <h3>Quick Actions</h3>
+            <input type="text" id="quizId" placeholder="Quiz ID" value="">
+            <button onclick="joinQuiz()">Join Quiz</button>
+            <button onclick="getQuizState()">Get Quiz State</button>
+        </div>
+
+        <div class="section">
+            <h3>Moderator Actions</h3>
+            <input type="text" id="roundId" placeholder="Round ID">
+            <button onclick="startRound()">Start Round</button>
+            <button onclick="nextParticipant()">Next Participant</button>
+        </div>
+
+        <div class="section">
+            <h3>Custom Event</h3>
+            <input type="text" id="eventName" placeholder="Event Name" value="joinQuiz">
+            <textarea id="eventData" placeholder='Event Data (JSON)'>{"quizId": ""}</textarea>
+            <button onclick="sendCustomEvent()">Send Event</button>
+        </div>
+
+        <div class="section">
+            <h3>Event Log</h3>
+            <button onclick="clearLog()">Clear Log</button>
+            <div id="log" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toISOString();
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : '';
+            logDiv.innerHTML += `<div class="${className}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        function connect() {
+            const token = document.getElementById('token').value;
+            if (!token) {
+                log('Please enter JWT token', 'error');
+                return;
+            }
+
+            socket = io('http://localhost:3000/quiz', {
+                auth: { token: token },
+                transports: ['websocket']
+            });
+
+            socket.on('connect', () => {
+                log('Connected to Socket.IO server', 'success');
+                document.getElementById('connectionStatus').textContent = 'Connected';
+            });
+
+            socket.on('disconnect', () => {
+                log('Disconnected from server', 'error');
+                document.getElementById('connectionStatus').textContent = 'Disconnected';
+            });
+
+            // Listen to all events
+            socket.onAny((event, data) => {
+                log(`Received event: ${event} - ${JSON.stringify(data, null, 2)}`, 'success');
+            });
+        }
+
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+                document.getElementById('connectionStatus').textContent = 'Not connected';
+            }
+        }
+
+        function joinQuiz() {
+            const quizId = document.getElementById('quizId').value;
+            if (!quizId) {
+                log('Please enter Quiz ID', 'error');
+                return;
+            }
+            sendEvent('joinQuiz', { quizId });
+        }
+
+        function getQuizState() {
+            const quizId = document.getElementById('quizId').value;
+            if (!quizId) {
+                log('Please enter Quiz ID', 'error');
+                return;
+            }
+            sendEvent('getQuizState', { quizId });
+        }
+
+        function startRound() {
+            const quizId = document.getElementById('quizId').value;
+            const roundId = document.getElementById('roundId').value;
+            if (!quizId || !roundId) {
+                log('Please enter Quiz ID and Round ID', 'error');
+                return;
+            }
+            sendEvent('startRound', { quizId, roundId });
+        }
+
+        function nextParticipant() {
+            const quizId = document.getElementById('quizId').value;
+            const roundId = document.getElementById('roundId').value;
+            if (!quizId || !roundId) {
+                log('Please enter Quiz ID and Round ID', 'error');
+                return;
+            }
+            sendEvent('nextParticipant', { quizId, roundId });
+        }
+
+        function sendCustomEvent() {
+            const eventName = document.getElementById('eventName').value;
+            const eventDataStr = document.getElementById('eventData').value;
+
+            try {
+                const eventData = JSON.parse(eventDataStr);
+                sendEvent(eventName, eventData);
+            } catch (e) {
+                log('Invalid JSON in event data', 'error');
+            }
+        }
+
+        function sendEvent(eventName, data) {
+            if (!socket) {
+                log('Not connected to server', 'error');
+                return;
+            }
+
+            log(`Sending event: ${eventName} - ${JSON.stringify(data, null, 2)}`);
+            socket.emit(eventName, data);
+        }
+    </script>
+</body>
+
+</html>
