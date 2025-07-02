@@ -217,4 +217,33 @@ export class RedisService {
         const key = `quiz:${quizId}:pending_answer:${userId}`;
         await this.cacheManager.del(key);
     }
+
+    /**
+     * Store selected answer temporarily for confirmation
+     */
+    async storeSelectedAnswer(quizId: string, questionId: string, userId: string, selectedIndex: number): Promise<void> {
+        const key = `quiz:${quizId}:selected_answer:${questionId}`;
+        const answerData = {
+            userId,
+            selectedIndex,
+            timestamp: new Date().toISOString()
+        };
+        await this.cacheManager.set(key, answerData, 60 * 5); // 5 minutes TTL
+    }
+
+    /**
+     * Get selected answer
+     */
+    async getSelectedAnswer(quizId: string, questionId: string): Promise<{ userId: string; selectedIndex: number; timestamp: string } | null> {
+        const key = `quiz:${quizId}:selected_answer:${questionId}`;
+        return await this.cacheManager.get(key);
+    }
+
+    /**
+     * Clear selected answer
+     */
+    async clearSelectedAnswer(quizId: string, questionId: string): Promise<void> {
+        const key = `quiz:${quizId}:selected_answer:${questionId}`;
+        await this.cacheManager.del(key);
+    }
 }

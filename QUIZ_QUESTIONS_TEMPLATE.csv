@@ -1,0 +1,25 @@
+questionText,questionType,options,correctAnswerIndex,difficulty,points
+"Is the earth round?",yes_no,"[""Yes"", ""No""]",0,easy,2
+"Is water wet?",yes_no,"[""Yes"", ""No""]",0,easy,2
+"Is fire cold?",yes_no,"[""Yes"", ""No""]",1,easy,2
+"Is the sun a star?",yes_no,"[""Yes"", ""No""]",0,easy,2
+"Is ice hot?",yes_no,"[""Yes"", ""No""]",1,easy,2
+"Can humans breathe underwater without equipment?",yes_no,"[""Yes"", ""No""]",1,easy,2
+"Is snow white?",yes_no,"[""Yes"", ""No""]",0,easy,2
+"Do cats meow?",yes_no,"[""Yes"", ""No""]",0,easy,2
+"What is 2 + 2?",multiple_choice,"[""3"", ""4"", ""5"", ""6""]",1,easy,2
+"Which planet is closest to the sun?",multiple_choice,"[""Venus"", ""Mercury"", ""Earth"", ""Mars""]",1,easy,2
+"What color do you get when you mix red and blue?",multiple_choice,"[""Green"", ""Purple"", ""Orange"", ""Yellow""]",1,easy,2
+"How many legs does a spider have?",multiple_choice,"[""6"", ""8"", ""10"", ""12""]",1,easy,2
+"What is the capital of France?",multiple_choice,"[""London"", ""Paris"", ""Rome"", ""Berlin""]",1,easy,2
+"Which animal is known as the King of the Jungle?",multiple_choice,"[""Tiger"", ""Lion"", ""Elephant"", ""Giraffe""]",1,easy,2
+"What is 5 x 3?",multiple_choice,"[""12"", ""15"", ""18"", ""20""]",1,easy,2
+"Which ocean is the largest?",multiple_choice,"[""Atlantic"", ""Pacific"", ""Indian"", ""Arctic""]",1,easy,2
+"What do bees make?",multiple_choice,"[""Milk"", ""Honey"", ""Butter"", ""Cheese""]",1,easy,2
+"How many sides does a triangle have?",multiple_choice,"[""2"", ""3"", ""4"", ""5""]",1,easy,2
+"What comes after Thursday?",multiple_choice,"[""Wednesday"", ""Friday"", ""Saturday"", ""Sunday""]",1,easy,2
+"Which fruit is yellow?",multiple_choice,"[""Apple"", ""Banana"", ""Orange"", ""Grape""]",1,easy,2
+"What is the opposite of hot?",multiple_choice,"[""Warm"", ""Cold"", ""Cool"", ""Mild""]",1,easy,2
+"How many minutes are in an hour?",multiple_choice,"[""50"", ""60"", ""70"", ""80""]",1,easy,2
+"What sound does a cow make?",multiple_choice,"[""Meow"", ""Moo"", ""Bark"", ""Chirp""]",1,easy,2
+"Which season comes after summer?",multiple_choice,"[""Spring"", ""Autumn"", ""Winter"", ""Summer""]",1,easy,2

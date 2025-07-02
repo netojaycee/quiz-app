@@ -1,0 +1,51 @@
+{
+    "name": "Complete Quiz Test - 3 Rounds",
+    "rounds": [
+        {
+            "roundNumber": 1,
+            "quizType": "yes_no",
+            "timePerQuestion": 20,
+            "questionsPerParticipant": 2
+        },
+        {
+            "roundNumber": 2,
+            "quizType": "multiple_choice",
+            "timePerQuestion": 30,
+            "questionsPerParticipant": 2
+        },
+        {
+            "roundNumber": 3,
+            "quizType": "simultaneous",
+            "timePerQuestion": 40,
+            "questionsPerParticipant": 3
+        }
+    ],
+    "users": [
+        {
+            "username": "team_lagos",
+            "contestants": [
+                {
+                    "name": "Alice",
+                    "location": "Lagos"
+                },
+                {
+                    "name": "Bob",
+                    "location": "Lagos"
+                }
+            ]
+        },
+        {
+            "username": "team_abuja",
+            "contestants": [
+                {
+                    "name": "Charlie",
+                    "location": "Abuja"
+                },
+                {
+                    "name": "Diana",
+                    "location": "Abuja"
+                }
+            ]
+        }
+    ]
+}

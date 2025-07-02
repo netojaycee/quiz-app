@@ -931,6 +931,116 @@ export class QuizGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
     }
 
+    /**
+     * Handle answer selection for sequential mode
+     */
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('selectAnswer')
+    async handleSelectAnswer(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() payload: {
+            quizId: string;
+            roundId: string;
+            questionId: string;
+            selectedIndex: number;
+        }
+    ) {
+        try {
+            const userInfo = this.connectedUsers.get(client.id);
+
+            if (!userInfo || userInfo.role !== 'CONTESTANT') {
+                client.emit('error', { message: 'Only contestants can select answers' });
+                return;
+            }
+
+            // Check if this user is the active participant
+            const activeUserId = await this.redisService.getActiveParticipant(payload.quizId);
+            if (activeUserId !== userInfo.userId) {
+                client.emit('error', { message: 'Only the active participant can select an answer' });
+                return;
+            }
+
+            // Store the selected answer temporarily (not processed yet)
+            await this.redisService.storeSelectedAnswer(
+                payload.quizId,
+                payload.questionId,
+                userInfo.userId,
+                payload.selectedIndex
+            );
+
+            // Broadcast to all that an answer was selected (but not processed)
+            this.server.to(payload.quizId).emit('answerSelected', {
+                userId: userInfo.userId,
+                questionId: payload.questionId,
+                selectedIndex: payload.selectedIndex,
+                username: userInfo.user.username
+            });
+
+            this.logger.log(`User ${userInfo.user.username} selected answer ${payload.selectedIndex} for question ${payload.questionId}`);
+
+        } catch (error) {
+            this.logger.error(`Failed to select answer:`, error.message);
+            client.emit('error', {
+                message: 'Failed to select answer',
+                details: error.message
+            });
+        }
+    }
+
+    /**
+     * Handle answer confirmation by moderator for sequential mode
+     */
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('confirmAnswer')
+    async handleConfirmAnswer(
+        @ConnectedSocket() client: Socket,
+        @MessageBody() payload: {
+            quizId: string;
+            roundId: string;
+            questionId: string;
+        }
+    ) {
+        try {
+            const userInfo = this.connectedUsers.get(client.id);
+
+            if (!userInfo || userInfo.role !== 'MODERATOR') {
+                client.emit('error', { message: 'Only moderators can confirm answers' });
+                return;
+            }
+
+            // Get the selected answer
+            const selectedAnswer = await this.redisService.getSelectedAnswer(payload.quizId, payload.questionId);
+            if (!selectedAnswer) {
+                client.emit('error', { message: 'No answer selected for this question' });
+                return;
+            }
+
+            // Process the answer
+            const result = await this.processAnswer(
+                payload.quizId,
+                payload.roundId,
+                selectedAnswer.userId,
+                payload.questionId,
+                selectedAnswer.selectedIndex
+            );
+
+            // Clean up the temporary stored answer
+            await this.redisService.clearSelectedAnswer(payload.quizId, payload.questionId);
+
+            // Proceed to next question/participant
+            await this.proceedToNext(payload.quizId, payload.roundId, result.isCorrect);
+
+            this.logger.log(`Moderator confirmed answer for question ${payload.questionId}, result: ${result.isCorrect ? 'correct' : 'incorrect'}`);
+
+        } catch (error) {
+            this.logger.error(`Failed to confirm answer:`, error.message);
+            client.emit('error', {
+                message: 'Failed to confirm answer',
+                details: error.message
+            });
+        }
+    }
+
     // Helper methods
 
     /**
