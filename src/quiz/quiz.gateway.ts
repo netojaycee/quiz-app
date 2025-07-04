@@ -549,14 +549,39 @@ export class QuizGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 const firstParticipant = participantOrder[0];
                 await this.redisService.setActiveParticipant(payload.quizId, firstParticipant.userId);
 
+                // Reset participant question counts for this round
+                for (const participant of participantOrder) {
+                    const key = `quiz:${payload.quizId}:round:${payload.roundId}:participant:${participant.userId}:question_count`;
+                    await this.redisService.deleteQuizCache(payload.quizId, `round:${payload.roundId}:participant:${participant.userId}:question_count`);
+                }
+
+                // For sequential rounds, we now need admin to select questions for each participant's turn
+                // Send available questions to admin for selection
+                const availableQuestions = questions.map(q => ({
+                    id: q.id,
+                    questionNumber: q.questionNumber,
+                    questionText: q.questionText // Sending text for easier identification
+                }));
+
                 this.server.to(payload.quizId).emit('roundStarted', {
                     roundId: payload.roundId,
                     quizType: round.quizType,
-                    currentQuestion: clientQuestions[0],
                     activeUserId: firstParticipant.userId,
                     participantOrder,
                     timePerQuestion: round.timePerQuestion,
-                    pointsPerCorrect: 1 // Sequential mode gives 1 point
+                    pointsPerCorrect: 1, // Sequential mode gives 1 point
+                    selectionMode: true // Indicates admin needs to select questions
+                });
+
+                // Immediately after round start, emit event to prompt for question selection
+                this.server.to(payload.quizId).emit('waitingForQuestionSelection', {
+                    activeUserId: firstParticipant.userId,
+                    username: firstParticipant.username,
+                    availableQuestions: availableQuestions,
+                    questionCount: {
+                        current: 0,
+                        total: round.questionsPerParticipant || 3 // Default to 3 if not specified
+                    }
                 });
             }
 
@@ -1015,6 +1040,12 @@ export class QuizGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 return;
             }
 
+            // Get active participant to verify the answer is for the correct user
+            const activeUserId = await this.redisService.getActiveParticipant(payload.quizId);
+            if (activeUserId !== selectedAnswer.userId) {
+                this.logger.warn(`Answer from ${selectedAnswer.userId} confirmed, but active participant is ${activeUserId}`);
+            }
+
             // Process the answer
             const result = await this.processAnswer(
                 payload.quizId,
@@ -1022,6 +1053,14 @@ export class QuizGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 selectedAnswer.userId,
                 payload.questionId,
                 selectedAnswer.selectedIndex
+            );
+
+            // Mark this question as answered for this participant
+            await this.redisService.storeAnsweredQuestion(
+                payload.quizId,
+                payload.roundId,
+                payload.questionId,
+                selectedAnswer.userId
             );
 
             // Clean up the temporary stored answer
@@ -1038,6 +1077,81 @@ export class QuizGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 message: 'Failed to confirm answer',
                 details: error.message
             });
+        }
+    }
+
+    /**
+     * Select a specific question for the active participant
+     * Only admins can select questions
+     */
+    @UseGuards(WsJwtGuard)
+    @SubscribeMessage('selectQuestionForParticipant')
+    async handleSelectQuestionForParticipant(
+        @MessageBody() data: { quizId: string; roundId: string; questionId: string },
+        @ConnectedSocket() client: Socket
+    ): Promise<void> {
+        try {
+            const { quizId, roundId, questionId } = data;
+
+            // Verify the client is an admin for this quiz
+            const isAdmin = await this.verifyQuizAdmin(quizId, client.id);
+            if (!isAdmin) {
+                client.emit('error', { message: 'Unauthorized: Only quiz admins can select questions' });
+                return;
+            }
+
+            // Get the active participant
+            const activeUserId = await this.redisService.getActiveParticipant(quizId);
+            if (!activeUserId) {
+                client.emit('error', { message: 'No active participant found' });
+                return;
+            }
+
+            // Get round questions
+            const questions = await this.redisService.getRoundQuestions(quizId, roundId);
+            if (!questions || questions.length === 0) {
+                client.emit('error', { message: 'No questions available for this round' });
+                return;
+            }
+
+            // Find the selected question
+            const selectedQuestion = questions.find(q => q.id === questionId);
+            if (!selectedQuestion) {
+                client.emit('error', { message: 'Selected question not found' });
+                return;
+            }
+
+            // Set as current question
+            const round = await this.prisma.round.findUnique({ where: { id: roundId } });
+            if (!round) {
+                client.emit('error', { message: 'Round not found' });
+                return;
+            }
+
+            // Broadcast the selected question to all participants
+            this.server.to(quizId).emit('questionSelected', {
+                activeUserId,
+                currentQuestion: {
+                    id: selectedQuestion.id,
+                    questionText: selectedQuestion.questionText,
+                    options: selectedQuestion.options,
+                    questionNumber: selectedQuestion.questionNumber
+                },
+                timeLimit: round.timePerQuestion || 30
+            });
+
+            // Start the timer for this question
+            const timerDuration = round.timePerQuestion || 30;
+            setTimeout(() => {
+                this.server.to(quizId).emit('questionTimerExpired', {
+                    questionId: selectedQuestion.id,
+                    activeUserId
+                });
+            }, timerDuration * 1000);
+
+        } catch (error) {
+            this.logger.error('Error selecting question for participant:', error.message);
+            client.emit('error', { message: 'Failed to select question for participant' });
         }
     }
 
@@ -1186,6 +1300,16 @@ export class QuizGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     /**
+     * Verify if a connected client is an admin for a specific quiz
+     */
+    private async verifyQuizAdmin(quizId: string, clientId: string): Promise<boolean> {
+        const userInfo = this.connectedUsers.get(clientId);
+        if (!userInfo) return false;
+
+        return userInfo.quizId === quizId && userInfo.role === 'MODERATOR';
+    }
+
+    /**
      * Get default participant order from database
      */
     private async getDefaultParticipantOrder(quizId: string): Promise<any[]> {
@@ -1238,58 +1362,10 @@ export class QuizGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 // Bonus flow is complete, auto-advance to next participant
                 this.logger.log(`Auto-advancing to next participant after bonus completion for quiz ${quizId}`);
 
-                // Get current state
-                const participantOrder = await this.redisService.getParticipantOrder(quizId);
-                const currentActiveUserId = await this.redisService.getActiveParticipant(quizId);
-                const currentQuestionIndex = await this.redisService.getCurrentQuestionIndex(quizId, roundId) || 0;
+                // Simply call proceedToNext which now handles our new flow
+                await this.proceedToNext(quizId, roundId, true);
 
-                // Find current participant index
-                const currentParticipantIndex = participantOrder.findIndex(p => p.userId === currentActiveUserId);
-
-                // Move to next participant
-                const nextParticipantIndex = (currentParticipantIndex + 1) % participantOrder.length;
-                const nextParticipant = participantOrder[nextParticipantIndex];
-
-                // If we've cycled through all participants, move to next question
-                let nextQuestionIndex = currentQuestionIndex;
-                if (nextParticipantIndex === 0) {
-                    nextQuestionIndex++;
-                }
-
-                // Get questions for this round
-                const questions = await this.redisService.getRoundQuestions(quizId, roundId);
-
-                if (nextQuestionIndex >= questions.length) {
-                    // Round is complete
-                    await this.prisma.round.update({
-                        where: { id: roundId },
-                        data: { isActive: false }
-                    });
-
-                    this.server.to(quizId).emit('roundCompleted', {
-                        roundId: roundId
-                    });
-                    return;
-                }
-
-                // Update active participant and question index
-                await this.redisService.setActiveParticipant(quizId, nextParticipant.userId);
-                await this.redisService.setCurrentQuestionIndex(quizId, roundId, nextQuestionIndex);
-
-                const nextQuestion = questions[nextQuestionIndex];
-
-                this.server.to(quizId).emit('nextParticipant', {
-                    activeUserId: nextParticipant.userId,
-                    currentQuestion: {
-                        id: nextQuestion.id,
-                        questionText: nextQuestion.questionText,
-                        options: nextQuestion.options,
-                        questionNumber: nextQuestion.questionNumber
-                    },
-                    questionIndex: nextQuestionIndex
-                });
-
-                this.logger.log(`Auto-advanced to participant ${nextParticipant.userId} with question ${nextQuestionIndex + 1}`);
+                this.logger.log(`Auto-advanced to next participant after bonus completion for quiz ${quizId}`);
             }
         } catch (error) {
             this.logger.error('Error auto-advancing after bonus:', error.message);
@@ -1336,10 +1412,10 @@ export class QuizGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private async proceedToNext(quizId: string, roundId: string, wasCorrect: boolean): Promise<void> {
         try {
             const participantOrder = await this.redisService.getParticipantOrder(quizId);
-            const currentQuestionIndex = await this.redisService.getCurrentQuestionIndex(quizId, roundId);
             const activeUserId = await this.redisService.getActiveParticipant(quizId);
+            const round = await this.prisma.round.findUnique({ where: { id: roundId } });
 
-            if (!participantOrder || !activeUserId) {
+            if (!participantOrder || !activeUserId || !round) {
                 return;
             }
 
@@ -1349,17 +1425,12 @@ export class QuizGateway implements OnGatewayConnection, OnGatewayDisconnect {
             const nextParticipantIndex = (currentParticipantIndex + 1) % participantOrder.length;
             const nextParticipant = participantOrder[nextParticipantIndex];
 
-            // If we've cycled through all participants, move to next question
-            let nextQuestionIndex = currentQuestionIndex;
-            if (nextParticipantIndex === 0) {
-                nextQuestionIndex++;
-            }
+            // Track how many questions each participant has answered
+            const participantQuestionCount = await this.redisService.getParticipantQuestionCount(quizId, roundId, nextParticipant.userId) || 0;
+            const questionsPerParticipant = round.questionsPerParticipant || 3; // Default to 3 if not specified
 
-            // Get questions for this round
-            const questions = await this.redisService.getRoundQuestions(quizId, roundId);
-
-            if (nextQuestionIndex >= questions.length) {
-                // Round is complete
+            if (nextParticipantIndex === 0 && participantQuestionCount >= questionsPerParticipant) {
+                // All participants have answered their required number of questions, round is complete
                 await this.prisma.round.update({
                     where: { id: roundId },
                     data: { isActive: false }
@@ -1371,21 +1442,42 @@ export class QuizGateway implements OnGatewayConnection, OnGatewayDisconnect {
                 return;
             }
 
-            // Update active participant and question index
+            // Update active participant
             await this.redisService.setActiveParticipant(quizId, nextParticipant.userId);
-            await this.redisService.setCurrentQuestionIndex(quizId, roundId, nextQuestionIndex);
 
-            const nextQuestion = questions[nextQuestionIndex];
+            // Get available questions for this round (not yet answered)
+            const questions = await this.redisService.getRoundQuestions(quizId, roundId);
+            const answeredQuestionIds = await this.redisService.getAnsweredQuestionIds(quizId, roundId);
 
-            this.server.to(quizId).emit('nextParticipant', {
+            // Filter out questions that have already been answered
+            const availableQuestions = questions.filter(q => !answeredQuestionIds.includes(q.id));
+
+            if (availableQuestions.length === 0) {
+                // No more questions available, end the round
+                await this.prisma.round.update({
+                    where: { id: roundId },
+                    data: { isActive: false }
+                });
+
+                this.server.to(quizId).emit('roundCompleted', {
+                    roundId: roundId,
+                    message: 'No more questions available'
+                });
+                return;
+            }
+
+            // Emit event to notify admin to select a question for the next participant
+            this.server.to(quizId).emit('waitingForQuestionSelection', {
                 activeUserId: nextParticipant.userId,
-                currentQuestion: {
-                    id: nextQuestion.id,
-                    questionText: nextQuestion.questionText,
-                    options: nextQuestion.options,
-                    questionNumber: nextQuestion.questionNumber
-                },
-                questionIndex: nextQuestionIndex
+                username: nextParticipant.username,
+                availableQuestions: availableQuestions.map(q => ({
+                    id: q.id,
+                    questionNumber: q.questionNumber
+                })),
+                questionCount: {
+                    current: participantQuestionCount,
+                    total: questionsPerParticipant
+                }
             });
 
         } catch (error) {

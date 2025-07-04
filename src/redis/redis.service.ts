@@ -246,4 +246,63 @@ export class RedisService {
         const key = `quiz:${quizId}:selected_answer:${questionId}`;
         await this.cacheManager.del(key);
     }
+
+    /**
+     * Store answered question for a specific round
+     */
+    async storeAnsweredQuestion(quizId: string, roundId: string, questionId: string, userId: string): Promise<void> {
+        // Store globally answered question for this round
+        const key = `quiz:${quizId}:round:${roundId}:answered_questions`;
+        const answeredQuestions: string[] = await this.cacheManager.get(key) || [];
+        if (!answeredQuestions.includes(questionId)) {
+            answeredQuestions.push(questionId);
+            await this.cacheManager.set(key, answeredQuestions, 60 * 60);
+        }
+
+        // Store participant-specific answered question
+        const participantKey = `quiz:${quizId}:round:${roundId}:participant:${userId}:answered_questions`;
+        const participantAnsweredQuestions: string[] = await this.cacheManager.get(participantKey) || [];
+        if (!participantAnsweredQuestions.includes(questionId)) {
+            participantAnsweredQuestions.push(questionId);
+            await this.cacheManager.set(participantKey, participantAnsweredQuestions, 60 * 60);
+
+            // Increment participant question count
+            await this.incrementParticipantQuestionCount(quizId, roundId, userId);
+        }
+    }
+
+    /**
+     * Get all answered questions for a specific round
+     */
+    async getAnsweredQuestionIds(quizId: string, roundId: string): Promise<string[]> {
+        const key = `quiz:${quizId}:round:${roundId}:answered_questions`;
+        return await this.cacheManager.get(key) || [];
+    }
+
+    /**
+     * Get questions answered by a specific participant in a round
+     */
+    async getParticipantAnsweredQuestions(quizId: string, roundId: string, userId: string): Promise<string[]> {
+        const key = `quiz:${quizId}:round:${roundId}:participant:${userId}:answered_questions`;
+        return await this.cacheManager.get(key) || [];
+    }
+
+    /**
+     * Increment the count of questions answered by a participant
+     */
+    async incrementParticipantQuestionCount(quizId: string, roundId: string, userId: string): Promise<number> {
+        const key = `quiz:${quizId}:round:${roundId}:participant:${userId}:question_count`;
+        const currentCount: number = await this.cacheManager.get(key) || 0;
+        const newCount = currentCount + 1;
+        await this.cacheManager.set(key, newCount, 60 * 60);
+        return newCount;
+    }
+
+    /**
+     * Get the count of questions answered by a participant
+     */
+    async getParticipantQuestionCount(quizId: string, roundId: string, userId: string): Promise<number> {
+        const key = `quiz:${quizId}:round:${roundId}:participant:${userId}:question_count`;
+        return await this.cacheManager.get(key) || 0;
+    }
 }
